@@ -1,0 +1,5 @@
+{
+  "name": "Padel Master",
+  "description": "Gestionnaire de tournoi de padel en format montante-descendante pour 13 joueurs sur 3 terrains.",
+  "requestFramePermissions": []
+}
