@@ -6,9 +6,9 @@ export interface Player {
 
 export interface Match {
   id: string;
-  court: number; // 1, 2, 3
-  team1: [string, string]; // Player IDs
-  team2: [string, string]; // Player IDs
+  court: number;
+  team1: [string, string];
+  team2: [string, string];
   score1: number | null;
   score2: number | null;
 }
@@ -23,7 +23,7 @@ export interface Rotation {
 
 export interface TournamentState {
   players: Player[];
-  playerCount: 12 | 13 | 14;
+  playerCount: number;
   rotationCount: number;
   rotations: Rotation[];
   currentRotationIndex: number;
