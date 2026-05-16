@@ -3,25 +3,25 @@ import { Player, Match, Rotation } from '../types';
 export const ROTATION_DURATION = 15; // minutes
 export const BREAK_DURATION = 3; // minutes
 
+function getCourtCount(playerCount: number): number {
+  return Math.floor(playerCount / 4);
+}
+
+function getByeCount(playerCount: number): number {
+  return playerCount % 4;
+}
+
 export function createInitialRotation(players: Player[], startTime: string): Rotation {
   const playerCount = players.length;
+  const courtCount = getCourtCount(playerCount);
+  const byeCount = getByeCount(playerCount);
   const shuffled = [...players].sort(() => Math.random() - 0.5);
-  
-  let byePlayerIds: string[] = [];
-  let activePlayers: Player[] = [];
 
-  if (playerCount === 12) {
-    activePlayers = shuffled;
-  } else if (playerCount === 13) {
-    byePlayerIds = [shuffled[12].id];
-    activePlayers = shuffled.slice(0, 12);
-  } else if (playerCount === 14) {
-    byePlayerIds = [shuffled[12].id, shuffled[13].id];
-    activePlayers = shuffled.slice(0, 12);
-  }
+  const byePlayerIds = shuffled.slice(courtCount * 4).map(p => p.id);
+  const activePlayers = shuffled.slice(0, courtCount * 4);
 
   const matches: Match[] = [];
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < courtCount; i++) {
     matches.push({
       id: `r0-t${i + 1}`,
       court: i + 1,
@@ -47,53 +47,77 @@ export function calculateNextRotation(
   rotationIndex: number
 ): Rotation {
   const playerCount = players.length;
-  const results = currentRotation.matches.map(m => {
-    const s1 = m.score1 || 0;
-    const s2 = m.score2 || 0;
-    return {
-      court: m.court,
-      winners: s1 > s2 ? m.team1 : m.team2,
-      losers: s1 > s2 ? m.team2 : m.team1,
-    };
-  });
+  const courtCount = getCourtCount(playerCount);
+  const byeCount = getByeCount(playerCount);
 
-  const t3 = results.find(r => r.court === 3)!;
-  const t2 = results.find(r => r.court === 2)!;
-  const t1 = results.find(r => r.court === 1)!;
+  const results = currentRotation.matches
+    .sort((a, b) => a.court - b.court)
+    .map(m => {
+      const s1 = m.score1 || 0;
+      const s2 = m.score2 || 0;
+      return {
+        court: m.court,
+        winners: s1 >= s2 ? [...m.team1] : [...m.team2],
+        losers: s1 >= s2 ? [...m.team2] : [...m.team1],
+      };
+    });
 
-  const nextT3Players = [...t3.winners, ...t2.winners];
-  const nextT2Players = [...t3.losers, ...t1.winners];
-  
-  let nextT1Players: string[] = [];
+  // Principe montante-descendante :
+  // - Terrain du haut (courtCount) : gagnants du haut + gagnants du milieu
+  // - Terrains du milieu : gagnants du terrain i-1 + perdants du terrain i+1
+  // - Terrain du bas (1) : perdants terrain 1 + perdants terrain 2 + joueurs au repos
+
+  const nextCourtPlayers: string[][] = Array.from({ length: courtCount }, () => []);
+
+  // Terrain le plus haut : gagnants des 2 terrains les plus hauts
+  const topCourt = courtCount;
+  nextCourtPlayers[topCourt - 1] = [
+    ...results[topCourt - 1].winners,
+    ...results[topCourt - 2].winners,
+  ];
+
+  // Terrains intermédiaires
+  for (let i = courtCount - 2; i >= 1; i--) {
+    nextCourtPlayers[i - 1 + 1] = [
+      ...results[i - 1].winners,
+      ...results[i].losers,
+    ];
+  }
+
+  // Terrain le plus bas : perdants des 2 terrains les plus bas + joueurs au repos
+  const bottomLosers = [...results[0].losers, ...results[1].losers];
+  const prevByePlayers = currentRotation.byePlayerIds;
+
+  // On détermine qui va au repos ce tour-ci
   let nextByePlayerIds: string[] = [];
+  let bottomPool = [...bottomLosers, ...prevByePlayers];
 
-  if (playerCount === 12) {
-    nextT1Players = [...t1.losers, ...t2.losers];
+  if (byeCount === 0) {
+    // 8, 12, 16 joueurs : personne au repos
     nextByePlayerIds = [];
-  } else if (playerCount === 13) {
-    const t1Losers = [...t1.losers].sort(() => Math.random() - 0.5);
-    nextByePlayerIds = [t1Losers[0]];
-    const t1Stayer = t1Losers[1];
-    nextT1Players = [t1Stayer, ...currentRotation.byePlayerIds, ...t2.losers];
-  } else if (playerCount === 14) {
-    nextByePlayerIds = [...t1.losers];
-    nextT1Players = [...currentRotation.byePlayerIds, ...t2.losers];
+    nextCourtPlayers[0] = bottomPool;
+  } else {
+    // On met au repos `byeCount` joueurs parmi les perdants du bas
+    // Priorité : ceux qui ont déjà joué le plus (ici on prend aléatoirement parmi les perdants du terrain 1)
+    const shuffledBottom = [...bottomPool].sort(() => Math.random() - 0.5);
+    nextByePlayerIds = shuffledBottom.slice(0, byeCount);
+    nextCourtPlayers[0] = shuffledBottom.slice(byeCount, byeCount + 4);
   }
 
   const arrangeCourt = (courtPlayers: string[], prevMatches: Match[], court: number): Match => {
     let bestMatch: Match | null = null;
-    
+
     for (let attempt = 0; attempt < 50; attempt++) {
       const shuffled = [...courtPlayers].sort(() => Math.random() - 0.5);
       const team1: [string, string] = [shuffled[0], shuffled[1]];
       const team2: [string, string] = [shuffled[2], shuffled[3]];
-      
-      const wasPartner = (p1: string, p2: string) => {
-        return prevMatches.some(m => 
-          (m.team1.includes(p1) && m.team1.includes(p2)) ||
-          (m.team2.includes(p1) && m.team2.includes(p2))
+
+      const wasPartner = (p1: string, p2: string) =>
+        prevMatches.some(
+          m =>
+            (m.team1.includes(p1) && m.team1.includes(p2)) ||
+            (m.team2.includes(p1) && m.team2.includes(p2))
         );
-      };
 
       if (!wasPartner(team1[0], team1[1]) && !wasPartner(team2[0], team2[1])) {
         bestMatch = {
@@ -109,30 +133,30 @@ export function calculateNextRotation(
     }
 
     if (!bestMatch) {
-      const shuffled = [...courtPlayers];
       bestMatch = {
         id: `r${rotationIndex}-t${court}`,
         court,
-        team1: [shuffled[0], shuffled[1]],
-        team2: [shuffled[2], shuffled[3]],
+        team1: [courtPlayers[0], courtPlayers[1]],
+        team2: [courtPlayers[2], courtPlayers[3]],
         score1: null,
         score2: null,
       };
     }
-    
+
     return bestMatch;
   };
 
-  const nextRotationStartTime = addMinutes(currentRotation.startTime, ROTATION_DURATION + BREAK_DURATION);
+  const nextRotationStartTime = addMinutes(
+    currentRotation.startTime,
+    ROTATION_DURATION + BREAK_DURATION
+  );
 
   return {
     id: rotationIndex,
     startTime: nextRotationStartTime,
-    matches: [
-      arrangeCourt(nextT1Players, currentRotation.matches, 1),
-      arrangeCourt(nextT2Players, currentRotation.matches, 2),
-      arrangeCourt(nextT3Players, currentRotation.matches, 3),
-    ],
+    matches: nextCourtPlayers.map((players, i) =>
+      arrangeCourt(players, currentRotation.matches, i + 1)
+    ),
     byePlayerIds: nextByePlayerIds,
     isCompleted: false,
   };
@@ -147,15 +171,15 @@ function addMinutes(timeStr: string, minutes: number): string {
 
 export function calculatePoints(rotations: Rotation[]): Record<string, number> {
   const points: Record<string, number> = {};
-  
+
   rotations.forEach(rotation => {
     if (!rotation.isCompleted) return;
-    
+
     rotation.matches.forEach(match => {
       const s1 = match.score1 || 0;
       const s2 = match.score2 || 0;
       const diff = s1 - s2;
-      
+
       match.team1.forEach(pId => {
         points[pId] = (points[pId] || 0) + diff;
       });
@@ -164,6 +188,6 @@ export function calculatePoints(rotations: Rotation[]): Record<string, number> {
       });
     });
   });
-  
+
   return points;
 }
