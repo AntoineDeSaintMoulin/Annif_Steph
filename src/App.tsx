@@ -183,7 +183,7 @@ export default function App() {
     }));
   };
 
-  const updatePlayerCount = (count: 12 | 13 | 14) => {
+  const updatePlayerCount = (count: number) => {
     if (state.currentRotationIndex !== -1) {
       if (!confirm("Changer le nombre de joueurs réinitialisera le tournoi en cours. Continuer ?")) return;
     }
@@ -251,10 +251,10 @@ export default function App() {
                   <div className="flex flex-col gap-1">
                     <span className="text-[10px] uppercase tracking-widest text-stone-400 font-bold ml-1">Joueurs</span>
                     <div className="flex bg-white p-1 rounded-xl border border-stone-200 shadow-sm">
-                      {[12, 13, 14].map((count) => (
-                        <button
-                          key={count}
-                          onClick={() => updatePlayerCount(count as 12 | 13 | 14)}
+{Array.from({ length: 9 }, (_, i) => i + 8).map((count) => (
+  <button
+    key={count}
+    onClick={() => updatePlayerCount(count)}
                           className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                             state.playerCount === count 
                             ? 'bg-stone-900 text-white shadow-md' 
